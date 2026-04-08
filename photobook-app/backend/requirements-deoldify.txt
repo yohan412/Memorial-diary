@@ -1,0 +1,7 @@
+# DeOldify 컬러화 (COLORIZE_MODE=deoldify, 기본)
+# torch CUDA는 환경에 맞게 https://pytorch.org 에서 설치
+torch>=2.1.0
+torchvision>=0.16.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+huggingface-hub>=0.20.0

@@ -1,0 +1,2 @@
+# [사용 중단] Stable Diffusion + ControlNet 경로는 제거되었습니다.
+# 컬러화는 DeOldify를 사용합니다 → requirements-deoldify.txt
