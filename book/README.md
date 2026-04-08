@@ -1,504 +1,199 @@
-# BookPrintAPI Python SDK
+# Photobook — 흑백 컬러화 + Sweetbook 포토북 주문
 
-포토북 생성/주문을 위한 BookPrintAPI Python SDK입니다.
+## 1. 서비스 소개
 
-> **이 SDK로 할 수 있는 것**: 포토북 생성 → 표지/내지 구성 → 주문 → 배송 추적
+**한 문장:** 흑백 사진을 AI로 컬러화한 뒤, [Sweetbook Book Print API](https://api.sweetbook.com/docs/) 워크플로우(판형·템플릿·책 생성 → 사진·표지·내지 → 최종화 → 견적·주문)에 맞춰 웹에서 포토북을 만들고 주문까지 이어 주는 데모 앱입니다.
 
+**타겟:** 조부모·부모 세대의 흑백 사진(가족 앨범, 오래된 인화본, 기념 사진 등)을 더 생생하게 되살려 **가족의 추억을 보존**하고 싶은 사용자와, 이를 실제 주문(인쇄)까지 연결하려는 연동 개발·검증 목적의 사용자(Sandbox 포함)를 함께 가정합니다.
+
+**기능 목록**
+
+- 통합 설정 한 페이지: 판형 선택 → `templateKind`로 **표지(cover)** / **내지(content)** 템플릿 목록 분리 → 책 생성(`bookUid`)
+- 컬러화 페이지: 다중 업로드·컬러화 버튼·원본 썸네일·**같은 페이지 하단** 3×3 미리보기(10장↑ 페이징)·재컬러화. 서버 **DeOldify**(Stable/Artistic 가중치), 미설치/오류 시 stub 폴백, **한 장씩** 순차 호출
+- Sweetbook: 사진 업로드, 표지·내지(multipart + JSON 파라미터), 최종화, 견적, 주문
+- 표지/내지 페이지: `GET /api/templates/{templateUid}` 응답의 `parameters.definitions`를 파싱해 필드 자동 생성(`binding`: `text`·`file`·`rowGallery` 등). 고급 옵션으로 JSON 직접 편집 가능
+- Flask 백엔드가 `book/bookprintapi` SDK 경로를 **읽기 전용**으로 참조
+- **데모 모드(랜딩 `demo` 버튼)**: Sweetbook API 없이도 설정→주문까지 UI를 확인할 수 있도록 더미 데이터/샘플 이미지를 채워 진행할 수 있습니다. (컬러화는 로컬 백엔드 AI로 실제 실행)
 ---
 
-## 설치
+## 2. 설치 · 환경 변수 · 실행
 
-```bash
-pip install -e .
-```
+### 다른 로컬 환경에서 실행하기(중요)
 
-또는 설치 없이 바로 사용:
+- **폴더 구조 전제**: **프로젝트 루트** 아래에 `photobook-app/`와 `book/`이 함께 있어야 합니다.
+  - `photobook-app/backend`는 `book/bookprintapi`를 SDK처럼 `import`해 사용합니다.
+- **환경 변수 파일 위치**: 아래 두 위치 중 하나에 `.env`를 두면 됩니다.
+  - **프로젝트 루트**의 `.env` (권장: 한 번에 관리)
+  - `photobook-app/backend/.env`
+- **포트**: 백엔드 `5000`, 프론트 `5173` 기본값입니다. 이미 사용 중이면 다른 프로세스를 종료하거나 포트를 바꿔야 합니다.
 
-```python
-import sys; sys.path.insert(0, "/path/to/bookprintapi-python-sdk")
-from bookprintapi import Client
-```
+### 사전 요구
 
-**의존성**: `requests`, `python-dotenv` (Python 3.10+)
+- Node.js 18+ / npm  
+- Python 3.11+ 권장 (3.13에서 검증)  
+- **프로젝트 루트**에 `book/bookprintapi` 패키지가 있어야 합니다 (이 저장소 구조 기준).
 
----
+### 환경 변수
 
-## 빠른 시작
+**프로젝트 루트**의 `.env` 또는 `photobook-app/backend/.env`에 둡니다.
 
-### 1. API Key 설정
+- **시작 방법(권장)**: **프로젝트 루트**의 `.env.example`을 복사해 `.env`를 만들고 `BOOKPRINT_API_KEY`만 채우세요.
+- **보안**: 실제 키는 절대 커밋하지 마세요. 이 저장소에는 예시만 포함합니다.
 
-```bash
-cp .env.example .env
-```
-
-`.env` 파일에 API Key를 입력하세요:
-
-```
+```env
 BOOKPRINT_API_KEY=SBxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 BOOKPRINT_BASE_URL=https://api-sandbox.sweetbook.com/v1
 ```
 
-> API Key는 BookPrintAPI 웹사이트에서 발급받을 수 있습니다.
-> Sandbox 테스트 시 `api-sandbox.sweetbook.com`을, 운영 시 `api.sweetbook.com`을 사용하세요.
+선택:
 
-### 2. 첫 번째 코드
-
-```python
-from bookprintapi import Client
-
-client = Client()  # .env에서 API Key 자동 로드
-
-# 내 책 목록 조회
-result = client.books.list(status="finalized")
-print(result)
+```env
+BOOKPRINT_ENV=sandbox
+COLORIZE_MODE=deoldify
+COLORIZE_DEFAULT_PROMPT=color photograph, natural colors
 ```
 
----
+**DeOldify:** `backend/vendor/DeOldify`에 [thookham/DeOldify](https://github.com/thookham/DeOldify) 소스가 있어야 하고, `pip install -r requirements-deoldify.txt` 로 torch·torchvision·opencv·huggingface-hub 를 설치합니다. 가중치(`ColorizeStable_gen.pth` 등)는 최초 추론 시 `backend/models/deoldify/models/` 로 자동 다운로드됩니다(용량 큼). **stub만 나오면** 의존성·vendor 경로·로그를 확인하세요. `COLORIZE_MODE=stub` 은 경량 전용입니다.
 
-## 전체 흐름: 책 생성부터 주문까지
+**참고:** Windows에서 `.env`를 UTF-8 BOM으로 저장하면 첫 변수명이 깨질 수 있습니다. BOM 없는 UTF-8이거나, 백엔드가 `utf-8-sig`로 읽도록 이미 처리해 두었습니다.
 
-```
-1. 책 생성 (draft)          client.books.create(...)
-2. 사진 업로드              client.photos.upload(...)
-3. 표지 생성                client.covers.create(...)
-4. 내지 페이지 삽입          client.contents.insert(...)  (반복)
-5. 책 확정 (finalized)      client.books.finalize(...)
-6. 가격 견적                client.orders.estimate(...)
-7. 주문 생성                client.orders.create(...)     ← 충전금 차감
-8. 주문 상태 확인            client.orders.get(...)
-```
-
-### 전체 예시
-
-```python
-from bookprintapi import Client
-
-client = Client()
-
-# 1. 책 생성
-book = client.books.create(
-    book_spec_uid="SQUAREBOOK_HC",
-    title="우리 가족 앨범",
-    creation_type="TEST"
-)
-book_uid = book["data"]["bookUid"]
-print(f"책 생성: {book_uid}")
-
-# 2. 사진 업로드
-client.photos.upload(book_uid, "photo1.jpg")
-client.photos.upload(book_uid, "photo2.jpg")
-
-# 3. 표지 생성
-client.covers.create(book_uid,
-    template_uid="COVER_TEMPLATE_UID",
-    parameters={"title": "우리 가족 앨범", "frontPhoto": "photo1.jpg"}
-)
-
-# 4. 내지 페이지 삽입
-client.contents.insert(book_uid,
-    template_uid="CONTENT_TEMPLATE_UID",
-    parameters={"photo": "photo2.jpg", "text": "즐거운 하루"}
-)
-
-# 5. 책 확정
-client.books.finalize(book_uid)
-print("책 확정 완료!")
-
-# 6. 가격 견적
-estimate = client.orders.estimate([{"bookUid": book_uid, "quantity": 1}])
-paid = estimate["data"]["paidCreditAmount"]
-print(f"결제 금액: {paid:,.0f}원 (VAT 포함)")
-
-# 7. 주문
-order = client.orders.create(
-    items=[{"bookUid": book_uid, "quantity": 1}],
-    shipping={
-        "recipientName": "홍길동",
-        "recipientPhone": "010-1234-5678",
-        "postalCode": "06100",
-        "address1": "서울특별시 강남구 테헤란로 123",
-        "address2": "4층",
-        "memo": "부재 시 경비실"
-    },
-    external_ref="MY-ORDER-001"
-)
-order_uid = order["data"]["orderUid"]
-print(f"주문 완료: {order_uid}")
-
-# 8. 주문 상태 확인
-detail = client.orders.get(order_uid)
-print(f"상태: {detail['data']['orderStatusDisplay']}")
-```
-
----
-
-## SDK 구조
-
-```python
-client = Client(api_key="SBxxxxx.xxxx")
-
-client.books       # 책 생성/조회/확정/삭제
-client.photos      # 사진 업로드/조회/삭제
-client.covers      # 표지 생성/조회/삭제
-client.contents    # 내지 삽입/삭제
-client.orders      # 주문 생성/조회/취소/배송지변경
-client.credits     # 충전금 잔액/거래내역/Sandbox충전
-```
-
----
-
-## API 레퍼런스
-
-### Books
-
-```python
-# 목록 조회
-client.books.list(status="finalized", limit=20, offset=0)
-
-# 생성
-client.books.create(book_spec_uid="SQUAREBOOK_HC", title="제목", creation_type="TEST")
-
-# 상세 조회
-client.books.get("bk_xxxx")
-
-# 확정 (이후 내용 수정 불가)
-client.books.finalize("bk_xxxx")
-
-# 삭제 (draft만 가능)
-client.books.delete("bk_xxxx")
-```
-
-### Photos
-
-```python
-# 업로드 (1장)
-client.photos.upload("bk_xxxx", "image.jpg")
-
-# 업로드 (여러 장)
-client.photos.upload_multiple("bk_xxxx", ["img1.jpg", "img2.jpg"])
-
-# 목록
-client.photos.list("bk_xxxx")
-
-# 삭제
-client.photos.delete("bk_xxxx", "photo250105143052123.JPG")
-```
-
-### Covers
-
-```python
-# 표지 생성 (파라미터에 사진 URL 또는 업로드 파일명 지정)
-client.covers.create("bk_xxxx",
-    template_uid="tpl_cover001",
-    parameters={"title": "My Book", "frontPhoto": "$upload"},
-    files=["cover.jpg"]
-)
-
-# 조회 / 삭제
-client.covers.get("bk_xxxx")
-client.covers.delete("bk_xxxx")
-```
-
-### Contents
-
-```python
-# 내지 페이지 삽입
-client.contents.insert("bk_xxxx",
-    template_uid="tpl_content001",
-    parameters={"date": "2026-01-01", "diary_text": "오늘의 일기"},
-    break_before="page"   # "page": 새 페이지부터 시작
-)
-
-# 전체 내지 삭제 (표지 유지)
-client.contents.clear("bk_xxxx")
-```
-
-### Orders
-
-```python
-# 견적 (충전금 차감 없음)
-client.orders.estimate([{"bookUid": "bk_xxxx", "quantity": 1}])
-
-# 주문 생성 (충전금 즉시 차감)
-client.orders.create(
-    items=[{"bookUid": "bk_xxxx", "quantity": 1}],
-    shipping={
-        "recipientName": "홍길동",
-        "recipientPhone": "010-1234-5678",
-        "postalCode": "06100",
-        "address1": "서울특별시 강남구 테헤란로 123",
-    },
-    external_ref="MY-ORDER-001"
-)
-
-# 묶음 주문 (여러 책을 한 번에)
-client.orders.create(
-    items=[
-        {"bookUid": "bk_xxxx", "quantity": 1},
-        {"bookUid": "bk_yyyy", "quantity": 2},
-    ],
-    shipping={...}
-)
-
-# 목록 / 상세
-client.orders.list(status=20)
-client.orders.get("or_xxxxxxxxxxxx")
-
-# 취소 (PAID/PDF_READY 상태만, 충전금 자동 반환)
-client.orders.cancel("or_xxxxxxxxxxxx", "주문 취소합니다")
-
-# 배송지 변경 (발송 전, 변경할 필드만)
-client.orders.update_shipping("or_xxxxxxxxxxxx", recipient_phone="010-9999-8888")
-```
-
-### Credits (충전금)
-
-```python
-# 잔액 조회
-client.credits.get_balance()
-
-# 거래 내역
-client.credits.get_transactions(limit=50)
-
-# Sandbox 테스트 충전 (sandbox 환경 전용)
-client.credits.sandbox_charge(100000, memo="테스트 충전")
-```
-
----
-
-## 주문 상태
-
-| 상태 | 코드 | 설명 | 취소 | 배송지변경 |
-|------|:----:|------|:----:|:--------:|
-| PAID | 20 | 결제 완료 | O | O |
-| PDF_READY | 25 | PDF 생성 완료 | O | O |
-| CONFIRMED | 30 | 제작 확정 | X | O |
-| IN_PRODUCTION | 40 | 인쇄 중 | X | X |
-| PRODUCTION_COMPLETE | 50 | 인쇄 완료 | X | X |
-| SHIPPED | 60 | 발송 완료 | X | X |
-| DELIVERED | 70 | 배송 완료 | X | X |
-| CANCELLED | 80/81 | 취소됨 | - | - |
-
-```
-PAID → PDF_READY → CONFIRMED → IN_PRODUCTION → PRODUCTION_COMPLETE → SHIPPED → DELIVERED
-```
-
----
-
-## 가격 계산
-
-```
-상품금액 = 단가 × 수량
-합계     = 상품금액 + 배송비(3,000원)
-결제금액 = Floor(합계 × 1.1 / 10) × 10   ← VAT 10% 포함, 10원 미만 절삭
-```
-
-> 정확한 금액은 `client.orders.estimate()`로 사전 확인하세요.
-
----
-
-## 에러 처리
-
-```python
-from bookprintapi import Client, ApiError
-
-client = Client()
-
-try:
-    client.orders.create(
-        items=[{"bookUid": "bk_invalid", "quantity": 1}],
-        shipping={...}
-    )
-except ApiError as e:
-    print(f"오류: {e}")                 # [400] Bad Request
-    print(f"상태코드: {e.status_code}")  # 400
-    print(f"상세: {e.details}")          # ["Book을 찾을 수 없습니다: bk_invalid"]
-
-    # 충전금 부족 시
-    if e.status_code == 402:
-        print("충전금이 부족합니다. 충전 후 다시 시도하세요.")
-```
-
----
-
-## 환경 설정
-
-### 방법 1: `environment` 파라미터 (권장)
-
-```python
-# Sandbox
-client = Client(api_key="SBxxxxx.xxxx", environment="sandbox")
-
-# Live (기본값)
-client = Client(api_key="SBxxxxx.xxxx")
-```
-
-### 방법 2: 환경변수
-
-| 변수 | 설명 | 기본값 |
-|------|------|--------|
-| `BOOKPRINT_API_KEY` | API Key (필수) | - |
-| `BOOKPRINT_ENV` | `sandbox` 또는 `live` | `live` |
-| `BOOKPRINT_BASE_URL` | API URL 직접 지정 (위 두 변수보다 우선) | - |
-
-| 환경 | URL |
-|------|-----|
-| Live | `https://api.sweetbook.com/v1` |
-| Sandbox | `https://api-sandbox.sweetbook.com/v1` |
-
-> Sandbox에서 생성한 주문은 실제 인쇄/배송되지 않습니다. 테스트 충전금으로 자유롭게 테스트하세요.
-
----
-
-## 예제 CLI로 테스트하기
-
-`examples/` 폴더에 3개의 CLI 예제가 있습니다. 아래 순서대로 따라하면 충전 → 책 조회 → 견적 → 주문 → 확인 → 취소까지 전체 플로우를 체험할 수 있습니다.
-
-### 준비
+### 백엔드
 
 ```bash
-cd examples
-cp ../.env.example ../.env
-# .env에 API Key 입력, BOOKPRINT_BASE_URL은 sandbox로 설정
+cd photobook-app/backend
+py -3 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+pip install -r requirements-deoldify.txt
+py app.py
 ```
 
-### Step 1. 충전금 충전 (Sandbox)
+기본 주소: `http://127.0.0.1:5000`  
+헬스: `GET http://127.0.0.1:5000/api/health`
+
+macOS/Linux 예시:
 
 ```bash
-# 잔액 확인
-python simple_credits.py balance
-
-# 테스트 충전금 10만원 충전
-python simple_credits.py charge 100000
-
-# 거래 내역 확인
-python simple_credits.py transactions
+cd photobook-app/backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-deoldify.txt
+python app.py
 ```
 
-### Step 2. 내 책 목록 확인
+### 프론트엔드
 
 ```bash
-# finalized 책만 조회 (주문 가능한 책)
-python simple_books.py list --status finalized
-
-# 책이 없으면 새로 생성
-python simple_books.py create "테스트북" --type TEST
+cd photobook-app/frontend
+npm install
+npm run dev
 ```
 
-### Step 3. 견적 조회
+기본 주소: `http://127.0.0.1:5173` — Vite가 `/api`를 Flask로 프록시하며, 컬러화용 **프록시 타임아웃은 600초**입니다.
+
+### 데모 모드로 바로 확인하기(API 없이)
+
+브라우저에서 `http://127.0.0.1:5173/`로 접속한 뒤, 랜딩에서 아래 중 하나를 눌러 시작합니다.
+
+- **memorize**: 일반 모드(실제 Sweetbook API 연동 흐름)
+- **demo**: 데모 모드(더미 데이터로 UI 진행 + 샘플 이미지)
+
+**중요:** 사용자가 URL로 직접 `/book/setup`, `/colorize`, `/order` 등에 접근하는 것을 막기 위해, 이 앱은 **랜딩에서 시작 버튼을 누른 뒤에만** 진행 화면으로 이동할 수 있습니다.
+
+데모 모드에서 사용되는 샘플 흑백 이미지는 프론트 정적 경로에 포함되어 있습니다.
+
+- `photobook-app/frontend/public/demo/bw/bw1.png` ~ `bw4.png`
+
+### 빌드(프론트)
 
 ```bash
-# bookUid를 Step 2에서 확인한 값으로 교체
-python simple_orders.py estimate bk_xxxxxxxxxxxx
-```
-
-출력 예시:
-```
-==================================================
-  견적 결과
-==================================================
-  bk_4NH4AWpcp0vx (26p x 1)  20,300원 x 1 = 20,300원
-──────────────────────────────────────────────────
-  상품 금액                20,300원
-  배송비                    3,000원
-  합계 (세전)              23,300원
-──────────────────────────────────────────────────
-  결제금액 (VAT포함)       25,630원
-  현재 충전금             401,000원
-  결제 후 잔액            375,370원
-==================================================
-```
-
-### Step 4. 주문 생성
-
-```bash
-python simple_orders.py create bk_xxxxxxxxxxxx \
-  --name "홍길동" \
-  --phone "010-1234-5678" \
-  --postal "06100" \
-  --addr1 "서울특별시 강남구 테헤란로 123" \
-  --ref "MY-TEST-001"
-```
-
-출력 예시:
-```
-주문 생성 완료!
-  주문번호: or_25ENPqM4bDxX
-  결제금액: 25,630원
-  충전금 잔액: 375,370원
-```
-
-### Step 5. 주문 확인
-
-```bash
-# 주문 목록
-python simple_orders.py list
-
-# 주문 상세
-python simple_orders.py get or_25ENPqM4bDxX
-```
-
-### Step 6. 주문 취소 (테스트이므로)
-
-```bash
-# 취소 (PAID 상태만 가능, 충전금 자동 반환)
-python simple_orders.py cancel or_25ENPqM4bDxX "테스트 주문 취소"
-
-# 충전금 복원 확인
-python simple_credits.py balance
-```
-
-### 전체 명령어 레퍼런스
-
-```bash
-# === simple_books.py ===
-python simple_books.py list                         # 전체 책 목록
-python simple_books.py list --status finalized       # finalized만
-python simple_books.py create "제목"                 # 책 생성
-python simple_books.py create "제목" --spec SQUAREBOOK_HC --type TEST
-python simple_books.py get <bookUid>                 # 책 상세
-python simple_books.py finalize <bookUid>            # 책 확정
-python simple_books.py delete <bookUid>              # 책 삭제 (draft만)
-
-# === simple_orders.py ===
-python simple_orders.py estimate <bookUid> [수량]    # 견적
-python simple_orders.py create <bookUid> [수량]      # 주문 (배송지 입력)
-python simple_orders.py list                         # 주문 목록
-python simple_orders.py list --status 20             # 상태별 필터
-python simple_orders.py get <orderUid>               # 주문 상세
-python simple_orders.py cancel <orderUid> "사유"      # 주문 취소
-python simple_orders.py shipping <orderUid> --name 홍길동 --phone 010-xxxx  # 배송지 변경
-
-# === simple_credits.py ===
-python simple_credits.py balance                     # 잔액 조회
-python simple_credits.py transactions                # 거래 내역
-python simple_credits.py charge <금액>               # Sandbox 충전
-python simple_credits.py charge <금액> "메모"         # 메모 포함 충전
+cd photobook-app/frontend
+npm run build
 ```
 
 ---
 
-## 파일 구조
+## 3. 사용 Book Print API (v1)
 
-```
-bookprintapi-python-sdk/
-├── bookprintapi/
-│   ├── __init__.py       # Client, ApiError, ResponseParser
-│   ├── client.py         # Core HTTP 클라이언트 (인증, 재시도, 에러처리)
-│   ├── exceptions.py     # ApiError, ValidationError
-│   ├── response.py       # ResponseParser
-│   ├── books.py          # 책 생성/조회/확정/삭제
-│   ├── photos.py         # 사진 업로드/조회/삭제
-│   ├── covers.py         # 표지 생성/조회/삭제
-│   ├── contents.py       # 내지 삽입/삭제
-│   ├── orders.py         # 주문 생성/조회/취소/배송지변경
-│   └── credits.py        # 충전금 잔액/거래내역/Sandbox충전
-│   └── webhook.py        # 웹훅 서명 검증 유틸
-├── examples/
-│   ├── simple_books.py   # 책 CLI (list, create, get, finalize, delete)
-│   ├── simple_orders.py  # 주문 CLI (estimate, create, list, get, cancel, shipping)
-│   └── simple_credits.py # 충전금 CLI (balance, transactions, charge)
-├── .env.example          # 환경변수 템플릿
-├── pyproject.toml        # 패키지 설정
-└── README.md
-```
+근거 문서: [전체 워크플로우](https://api.sweetbook.com/docs/guides/workflow/), [API 개요](https://api.sweetbook.com/docs/)
+
+| 앱에서의 단계 | HTTP (Sandbox/Live Base + 경로) | 이 프로젝트에서의 호출 |
+|---------------|-----------------------------------|-------------------------|
+| 판형 목록 | `GET /v1/book-specs` | `GET /api/book-specs` → SDK `Client.get` |
+| 템플릿 목록 | `GET /v1/templates?bookSpecUid=…` | `GET /api/templates` |
+| 책 목록 | `GET /v1/Books` | `GET /api/books` (`status`, `limit`, `offset`) |
+| 책 생성 | `POST /v1/Books` | `POST /api/books` |
+| 책 상세 | `GET /v1/Books/{bookUid}` | `GET /api/books/{bookUid}` (단건 405·404 시 목록으로 폴백) |
+| 책 삭제 | `DELETE /v1/Books/{bookUid}` (draft만) | `DELETE /api/books/{bookUid}` |
+| 사진 업로드 | `POST /v1/Books/{bookUid}/photos` | `POST /api/books/{bookUid}/photos` |
+| 사진 목록 | `GET /v1/Books/{bookUid}/photos` | `GET /api/books/{bookUid}/photos` |
+| 표지 조회 | `GET /v1/Books/{bookUid}/cover` | `GET /api/books/{bookUid}/cover` |
+| 표지 | `POST /v1/Books/{bookUid}/cover` | `POST /api/books/{bookUid}/cover` (multipart) |
+| 내지 | `POST /v1/Books/{bookUid}/contents` | `POST /api/books/{bookUid}/contents` (multipart) |
+| 최종화 | `POST /v1/Books/{bookUid}/finalization` | `POST /api/books/{bookUid}/finalization` |
+| 견적 | `POST /v1/orders/estimate` | `POST /api/orders/estimate` |
+| 주문 | `POST /v1/orders` | `POST /api/orders` |
+| 주문 단건 조회 | `GET /v1/orders/{orderUid}` | `GET /api/orders/{orderUid}` |
+| 주문 목록 | `GET /v1/orders` | `GET /api/orders` |
+| 크레딧 | `GET /v1/credits` | `GET /api/credits` |
+
+**웹훅:** Sweetbook 주문/결제/제작 이벤트를 로컬에서 수신·조회할 수 있도록 최소 기능을 포함합니다.
+
+- `POST /api/webhooks/sweetbook` — Sweetbook webhook 수신(서명 검증)
+- `GET /api/webhooks/events` — 수신 이벤트 목록
+
+**로컬 전용:** `POST /api/photos/colorize` — DeOldify, 실패 시 PIL stub. `GET /api/photos/colorize/diagnostics`에 `colorize_backend`(고정 `deoldify`). 이미지 1장씩 처리합니다.
+
+**데모 모드 참고:** 데모 모드에서도 컬러화는 위 로컬 엔드포인트를 실제로 호출해 실행합니다. (다만 Sweetbook 관련 API들은 더미 응답으로 UI를 채웁니다.)
+
+---
+
+## 4. AI 도구 사용 내역 (예시 표)
+
+| 구간 | 도구 / 모델 | 용도 |
+|------|-------------|------|
+| 컬러화 (기본) | DeOldify (GAN), 모델 싱글톤 캐시 | 흑백 사진 컬러화 |
+| 컬러화 (폴백) | Pillow stub | DeOldify 미설치·오류 시 자동 |
+| 백엔드 보조 | Cursor / Copilot 등 코딩 어시스턴트 | 스캐폴딩·리팩터 (저장소에 명시 안 함) |
+
+실제 운영 시 사용한 모델 ID·버전은 배포 환경에 맞게 이 표를 갱신하면 됩니다.
+
+---
+
+## 5. 설계 의도 · 비즈니스 관점 · 보완 아이디어
+
+**설계 의도**
+
+- 조부모·부모 세대의 흑백 사진을 “그 시절의 분위기”를 해치지 않으면서 컬러로 되살려, 가족이 함께 보고 **추억을 자연스럽게 공유·보존**할 수 있게 하는 것을 목표로 합니다.
+- 컬러화→업로드→표지/내지→주문까지 이어지는 실제 인쇄 워크플로우를 **페이지(라우트)** 로 분리해, 사용자가 “지금 무엇을 하고 있는지”를 잃지 않도록 했습니다.
+- 컬러화는 GPU/메모리 피크를 막기 위해 **요청당 1장 + 서버 락**이며, 프론트도 순차 호출합니다(대량 업로드 환경에서 안정성 우선).
+
+**비즈니스**
+
+- “사진을 복원/컬러화해서 간직하고 싶다”는 개인 수요를, **실물 포토북 제작**으로 자연스럽게 이어주는 흐름을 가정합니다. 가족 행사(환갑·칠순, 결혼, 장례/추모 앨범, 돌/백일 등)처럼 기록의 가치가 큰 순간에 특히 유효합니다.
+
+**추가하고 싶은 기능 (예시)**
+
+- 프롬프트로 특정 영역/대상의 색을 지정(예: “어머니 한복은 연분홍, 아버지 넥타이는 남색”)할 수 있도록, **영역 마스크 + 컬러 힌트** 입력 UI 제공
+- 손상된 사진(스크래치/구김/노이즈/낡은 인화)을 복원하는 **사진 복원(리스토어)** 파이프라인 추가(업스케일 포함)
+- 컬러화·복원 작업 큐(Redis/RQ)와 진행률(WebSocket/Server-Sent Events)
+
+---
+
+## 라우트 요약 (프론트)
+
+| 경로 | 설명 |
+|------|------|
+| `/book/setup` | 판형 · 템플릿 · 책 생성 |
+| `/colorize` | 업로드 · 순차 컬러화 · 동일 페이지 미리보기·재컬러 |
+| `/photos/upload` | Sweetbook 사진 업로드 |
+| `/cover` | 표지 multipart |
+| `/contents` | 내지 삽입(반복 실행 가능) |
+| `/order` | 주문 생성 |
+| `/manage` | 책/주문 관리(주문·웹훅 목록/조회) |
+
+세션 메타(`bookUid`, 업로드 파일명 등)는 `sessionStorage` 키 `photobook_app_meta_v1`에 저장합니다. 또한 내지 삽입 대기열/성공 항목/성공 카운터는 `bookUid`별 `sessionStorage`에 저장해 **새로고침 후에도** 내지 미리보기/상태 표시가 유지되도록 했습니다. 컬러화 결과 대용량 base64는 메모리에만 두므로 **새로고침 시 유실**될 수 있습니다.
+
+데모 모드는 재현성을 위해 `bookUid`를 `demo-book-1`로 고정해 사용합니다.
+
