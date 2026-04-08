@@ -13,6 +13,7 @@
 - Sweetbook: 사진 업로드, 표지·내지(multipart + JSON 파라미터), 최종화, 견적, 주문
 - 표지/내지 페이지: `GET /api/templates/{templateUid}` 응답의 `parameters.definitions`를 파싱해 필드 자동 생성(`binding`: `text`·`file`·`rowGallery` 등). 고급 옵션으로 JSON 직접 편집 가능
 - Flask 백엔드가 `book/bookprintapi` SDK 경로를 **읽기 전용**으로 참조
+- **데모 모드(랜딩 `demo` 버튼)**: Sweetbook API 없이도 설정→주문까지 UI를 확인할 수 있도록 더미 데이터/샘플 이미지를 채워 진행할 수 있습니다. (컬러화는 로컬 백엔드 AI로 실제 실행)
 ---
 
 ## 2. 설치 · 환경 변수 · 실행
@@ -93,6 +94,19 @@ npm run dev
 
 기본 주소: `http://127.0.0.1:5173` — Vite가 `/api`를 Flask로 프록시하며, 컬러화용 **프록시 타임아웃은 600초**입니다.
 
+### 데모 모드로 바로 확인하기(API 없이)
+
+브라우저에서 `http://127.0.0.1:5173/`로 접속한 뒤, 랜딩에서 아래 중 하나를 눌러 시작합니다.
+
+- **memorize**: 일반 모드(실제 Sweetbook API 연동 흐름)
+- **demo**: 데모 모드(더미 데이터로 UI 진행 + 샘플 이미지)
+
+**중요:** 사용자가 URL로 직접 `/book/setup`, `/colorize`, `/order` 등에 접근하는 것을 막기 위해, 이 앱은 **랜딩에서 시작 버튼을 누른 뒤에만** 진행 화면으로 이동할 수 있습니다.
+
+데모 모드에서 사용되는 샘플 흑백 이미지는 프론트 정적 경로에 포함되어 있습니다.
+
+- `photobook-app/frontend/public/demo/bw/bw1.png` ~ `bw4.png`
+
 ### 빌드(프론트)
 
 ```bash
@@ -132,6 +146,8 @@ npm run build
 - `GET /api/webhooks/events` — 수신 이벤트 목록
 
 **로컬 전용:** `POST /api/photos/colorize` — DeOldify, 실패 시 PIL stub. `GET /api/photos/colorize/diagnostics`에 `colorize_backend`(고정 `deoldify`). 이미지 1장씩 처리합니다.
+
+**데모 모드 참고:** 데모 모드에서도 컬러화는 위 로컬 엔드포인트를 실제로 호출해 실행합니다. (다만 Sweetbook 관련 API들은 더미 응답으로 UI를 채웁니다.)
 
 ---
 
@@ -180,4 +196,6 @@ npm run build
 | `/manage` | 책/주문 관리(주문·웹훅 목록/조회) |
 
 세션 메타(`bookUid`, 업로드 파일명 등)는 `sessionStorage` 키 `photobook_app_meta_v1`에 저장합니다. 또한 내지 삽입 대기열/성공 항목/성공 카운터는 `bookUid`별 `sessionStorage`에 저장해 **새로고침 후에도** 내지 미리보기/상태 표시가 유지되도록 했습니다. 컬러화 결과 대용량 base64는 메모리에만 두므로 **새로고침 시 유실**될 수 있습니다.
+
+데모 모드는 재현성을 위해 `bookUid`를 `demo-book-1`로 고정해 사용합니다.
 
